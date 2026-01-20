@@ -23,6 +23,7 @@ Measured at 1024x1024, 26 steps with Flux2 Klein Base 9B.
 
 # Requirements:
 Working ComfyKitchen (needs latest comfy and possibly pytorch with cu130)
+
 Triton
 
 Windows untested, but I hear triton-windows exists.
