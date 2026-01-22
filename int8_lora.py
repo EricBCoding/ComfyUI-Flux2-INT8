@@ -29,7 +29,7 @@ class INT8LoraLoader:
     CATEGORY = "loaders"
     DESCRIPTION = "Loads LoRA for INT8 models with high-precision INT8-space patching. Avoids RAM bloat and preserves quality."
 
-    def load_lora(self, model, lora_name, strength, seed):
+    def load_lora(self, model, lora_name, strength, seed=318008):
         if strength == 0:
             return (model,)
 
@@ -81,7 +81,7 @@ class INT8LoraLoader:
                         adapter.loaded_keys, 
                         adapter.weights, 
                         w_scale,
-                        seed=138008 #Empirically chosen best possible seed.
+                        seed=seed
                     )
                     final_patch_dict[key] = new_adapter
                     applied_count += 1
