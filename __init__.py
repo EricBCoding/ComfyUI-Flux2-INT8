@@ -85,15 +85,20 @@ except ImportError:
 try:
     from .int8_unet_loader import UNetLoaderINTW8A8
     from .int8_lora import INT8LoraLoader
+    from .int8_dynamic_lora import INT8DynamicLoraLoader, INT8DynamicLoraStack
     
     NODE_CLASS_MAPPINGS = {
         "OTUNetLoaderW8A8": UNetLoaderINTW8A8,
         "INT8LoraLoader": INT8LoraLoader,
+        "INT8DynamicLoraLoader": INT8DynamicLoraLoader,
+        "INT8DynamicLoraStack": INT8DynamicLoraStack,
     }
 
     NODE_DISPLAY_NAME_MAPPINGS = {
         "OTUNetLoaderW8A8": "Load Diffusion Model INT8 (W8A8)",
         "INT8LoraLoader": "Load LoRA INT8 (Stochastic)",
+        "INT8DynamicLoraLoader": "Load LoRA INT8 (Dynamic)",
+        "INT8DynamicLoraStack": "INT8 LoRA Stack (Dynamic)",
     }
 except ImportError as e:
     logging.error(f"Int88: Failed to import nodes: {e}")

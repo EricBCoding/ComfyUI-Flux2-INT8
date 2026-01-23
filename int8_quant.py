@@ -66,6 +66,9 @@ class LinearW8A8(nn.Linear):
         self.register_buffer("scale", torch.tensor(1.0, dtype=torch.float32))
         self.__is_quantized = False
         self.compute_dtype = torch.float16 # Default
+        self.lora_A = None
+        self.lora_B = None
+        self.lora_alpha = None
 
     @torch.no_grad()
     def quantize(self):
@@ -100,13 +103,25 @@ class LinearW8A8(nn.Linear):
         
         x = x_orig.reshape(-1, x_orig.shape[-1])
         
-        # Heuristic: For very small batches, dequantizing the weight 
-        # is often faster/more accurate than quantizing the activation.
+        # 1. Base INT8/Dequantized Linear
         if x.shape[0] > 16:
             y = int8_forward_dynamic(x, self.weight, self.scale, self.bias, self.compute_dtype)
         else:
             w = dequantize(self.weight, self.scale).to(x.dtype)
             y = F.linear(x, w, self.bias)
+        
+        # 2. Add LoRA Path
+        if self.lora_A is not None and self.lora_B is not None:
+            # lora_A: [rank, in_features], lora_B: [out_features, rank]
+            # y = y + (x @ A.T @ B.T) * scale
+            # Note: We keep LoRA in high precision (compute_dtype or x.dtype)
+            lora_x = F.linear(x.to(self.lora_A.dtype), self.lora_A)
+            lora_y = F.linear(lora_x, self.lora_B)
+            
+            if self.lora_alpha is not None:
+                lora_y = lora_y * self.lora_alpha
+                
+            y = y + lora_y.to(y.dtype)
         
         return y.reshape(x_orig.shape[:-1] + (y.shape[-1],))
 
@@ -257,6 +272,105 @@ if _LORA_ADAPTER_AVAILABLE:
 
 
 # =============================================================================
+# Dynamic LoRA Synchronization Hook
+# =============================================================================
+
+class DynamicLoRAHook:
+    """
+    Hook registered on the diffusion_model to synchronize dynamic LoRA attributes
+    with the current ModelPatcher context at the start of each forward pass.
+    """
+    def __init__(self):
+        self.current_lora_id = None
+
+    def pre_forward(self, module, input_args, input_kwargs):
+        # 1. Try to find transformer_options
+        transformer_options = input_kwargs.get("transformer_options", {})
+        if not transformer_options:
+            # Fallback for models that pass it in context
+            context = input_args[2] if len(input_args) > 2 else None
+            if isinstance(context, dict) and "transformer_options" in context:
+                transformer_options = context["transformer_options"]
+        
+        dynamic_loras = transformer_options.get("dynamic_loras", [])
+        
+        # 2. Generate a unique ID for this set of LoRAs
+        # We use handles/strengths to detect changes
+        lora_id = hash(tuple((id(d["patches"]), d["strength"]) for d in dynamic_loras)) if dynamic_loras else None
+        
+        if lora_id == self.current_lora_id:
+            return None # Already synchronized
+            
+        # 3. Synchronize all linear layers
+        self.apply_composition(module, dynamic_loras)
+        self.current_lora_id = lora_id
+        return None
+
+    def apply_composition(self, diffusion_model, dynamic_loras):
+        # Pre-group patches by layer
+        layer_patches = {}
+        if dynamic_loras:
+            for entry in dynamic_loras:
+                strength = entry["strength"]
+                for key, adapter in entry["patches"].items():
+                    if key not in layer_patches: layer_patches[key] = []
+                    layer_patches[key].append((adapter, strength))
+
+        # Update all modules
+        for name, module in diffusion_model.named_modules():
+            if not hasattr(module, "lora_A"):
+                continue
+            
+            # Find patches for this module
+            # ComfyUI keys are often 'diffusion_model.path.to.weight' or 'path.to.weight'
+            possible_keys = [f"diffusion_model.{name}.weight", f"{name}.weight"]
+            patches = None
+            for pk in possible_keys:
+                if pk in layer_patches:
+                    patches = layer_patches[pk]
+                    break
+            
+            if not patches:
+                module.lora_A = None
+                module.lora_B = None
+                module.lora_alpha = None
+                continue
+
+            # Compose
+            all_A = []
+            all_B = []
+            for adapter, strength in patches:
+                v = adapter.weights
+                up, down, alpha, mid = v[0], v[1], v[2], v[3]
+                rank = down.shape[0] if down.ndim >= 2 else 1
+                scale = (alpha / rank) * strength if alpha is not None else strength
+                
+                curr_A = down
+                if mid is not None:
+                    curr_A = torch.mm(mid.flatten(1), down.flatten(1)).reshape(down.shape)
+                
+                all_A.append(curr_A * scale)
+                all_B.append(up)
+            
+            if all_A:
+                device = getattr(module, "weight", torch.tensor(0)).device
+                module.lora_A = torch.cat(all_A, dim=0).to(device)
+                module.lora_B = torch.cat(all_B, dim=1).to(device)
+                module.lora_alpha = None
+            else:
+                module.lora_A = None
+                module.lora_B = None
+
+    @classmethod
+    def register(cls, diffusion_model):
+        if not hasattr(diffusion_model, "_dynamic_lora_hook"):
+            hook = cls()
+            diffusion_model._dynamic_lora_hook = hook
+            diffusion_model.register_forward_pre_hook(hook.pre_forward, with_kwargs=True)
+        return diffusion_model._dynamic_lora_hook
+
+
+# =============================================================================
 # Int8TensorwiseOps - ComfyUI Custom Operations
 # =============================================================================
 
@@ -280,6 +394,9 @@ if _COMFY_OPS_AVAILABLE:
                 self.weight_scale = None
                 self._is_quantized = False
                 self.compute_dtype = torch.bfloat16
+                self.lora_A = None
+                self.lora_B = None
+                self.lora_alpha = None
             
             def reset_parameters(self):
                 return None
@@ -401,6 +518,20 @@ if _COMFY_OPS_AVAILABLE:
                     # Small batch fallback
                     w_float = dequantize(weight, w_scale).to(x.dtype)
                     y = F.linear(x_2d, w_float, bias)
+                
+                # Dynamic LoRA Path
+                if self.lora_A is not None and self.lora_B is not None:
+                    # Ensure LoRA tensors are on the same device as x
+                    lA = self.lora_A.to(x.device, non_blocking=True)
+                    lB = self.lora_B.to(x.device, non_blocking=True)
+                    
+                    lora_x = F.linear(x_2d.to(lA.dtype), lA)
+                    lora_y = F.linear(lora_x, lB)
+                    
+                    if self.lora_alpha is not None:
+                        lora_y = lora_y * self.lora_alpha
+                    
+                    y = y + lora_y.to(y.dtype)
                 
                 return y.reshape(*x_shape[:-1], y.shape[-1])
         
