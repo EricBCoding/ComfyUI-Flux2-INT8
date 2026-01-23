@@ -27,7 +27,7 @@ https://huggingface.co/bertbobson/Chroma1-HD-INT8Tensorwise
 
 # Metrics:
 
-Measured at 1024x1024, 26 steps with Flux2 Klein Base 9B.
+Measured on a 3090 at 1024x1024, 26 steps with Flux2 Klein Base 9B.
 
 | Format | Speed (s/it) | Relative Speedup |
 |-------|--------------|------------------|
@@ -38,6 +38,15 @@ Measured at 1024x1024, 26 steps with Flux2 Klein Base 9B.
 | int8 compile | 1.04 | 1.99× |
 | gguf8_0 compile | 2.03 | 1.02× |
 
+Measured on an 8gb 5060, same settings:
+
+| Format | Speed (s/it) | Relative Speedup |
+|-------|--------------|------------------|
+| fp8 | 3.04 | 1.00× |
+| fp8 fast | 3.00 | 1.00× |
+| fp8 compile | couldn't get to work | ??× |
+| int8 | 2.53 | 1.20× |
+| int8 compile | 2.25 | 1.35× |
 
 
 # Requirements:
