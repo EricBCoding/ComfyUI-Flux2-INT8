@@ -468,14 +468,14 @@ if _COMFY_OPS_AVAILABLE:
                         if is_excluded or is_dim1 or Int8TensorwiseOps._is_prequantized:
                             self._is_quantized = False
                             self.weight = nn.Parameter(weight_tensor, requires_grad=False)
-                            #print("Not quantizing", prefix)
+                            print("Not quantizing", prefix)
                         else:
                             # Quantize on the fly
                             # We seriously need to avoid doing this when loading a prequantized model
                             device = torch.device("cuda") if torch.cuda.is_available() else weight_tensor.device
                             w_gpu = weight_tensor.to(device, non_blocking=True)
                             q_weight, q_scale = quantize_int8_tensorwise(w_gpu)
-                            #print("Quantizing", prefix)
+                            print("Quantizing", prefix)
                             
                             self.weight = nn.Parameter(q_weight.cpu(), requires_grad=False)
                             self.weight_scale = q_scale.cpu() if isinstance(q_scale, torch.Tensor) else q_scale
