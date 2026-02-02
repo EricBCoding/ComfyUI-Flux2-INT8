@@ -113,9 +113,7 @@ class INT8LoraLoaderStack:
             "required": {
                 "model": ("MODEL",),
             },
-            # "optional": {
-            #     "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffff}),
-            # },
+            "optional": {}
         }
         lora_list = ["None"] + folder_paths.get_filename_list("loras")
         for i in range(1, 11):
