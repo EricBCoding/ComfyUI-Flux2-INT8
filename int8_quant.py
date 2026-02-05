@@ -474,7 +474,8 @@ if _COMFY_OPS_AVAILABLE:
                 else:
                     # Small batch fallback
                     w_float = dequantize(weight, w_scale).to(x.dtype)
-                    y = F.linear(x_2d, w_float, bias)
+                    bias_typed = bias.to(x.dtype) if bias is not None else None
+                    y = F.linear(x_2d, w_float, bias_typed)
                 
                 # Dynamic LoRA Path
                 if self.lora_A is not None and self.lora_B is not None:
@@ -504,4 +505,5 @@ if _COMFY_OPS_AVAILABLE:
         def conv_nd(cls, dims, *args, **kwargs):
             if dims == 2: return cls.Conv2d(*args, **kwargs)
             elif dims == 3: return cls.Conv3d(*args, **kwargs)
+
             else: raise ValueError(f"unsupported dimensions: {dims}")
