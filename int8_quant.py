@@ -506,4 +506,3 @@ if _COMFY_OPS_AVAILABLE:
             if dims == 2: return cls.Conv2d(*args, **kwargs)
             elif dims == 3: return cls.Conv3d(*args, **kwargs)
             else: raise ValueError(f"unsupported dimensions: {dims}")
-
